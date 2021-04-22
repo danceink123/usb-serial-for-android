@@ -1,10 +1,13 @@
 package com.hoho.android.usbserial.examples;
 
 import android.app.PendingIntent;
+import android.appwidget.AppWidgetManager;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.res.Resources;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
@@ -21,6 +24,7 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.RemoteViews;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ToggleButton;
@@ -28,16 +32,22 @@ import android.widget.ToggleButton;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
+import androidx.localbroadcastmanager.content.LocalBroadcastManager;
 
+import com.hoho.android.usbserial.bean.TyreInfoBean;
+import com.hoho.android.usbserial.bean.TyreInfoCollection;
 import com.hoho.android.usbserial.driver.UsbSerialDriver;
 import com.hoho.android.usbserial.driver.UsbSerialPort;
 import com.hoho.android.usbserial.driver.UsbSerialProber;
 import com.hoho.android.usbserial.util.HexDump;
 import com.hoho.android.usbserial.util.SerialInputOutputManager;
 
+import org.greenrobot.eventbus.EventBus;
+
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.Iterator;
 import java.util.concurrent.Executors;
 
 public class TerminalFragment extends Fragment implements SerialInputOutputManager.Listener {
@@ -60,6 +70,9 @@ public class TerminalFragment extends Fragment implements SerialInputOutputManag
     private UsbSerialPort usbSerialPort;
     private UsbPermission usbPermission = UsbPermission.Unknown;
     private boolean connected = false;
+
+    private TyreInfoCollection<Integer, TyreInfoBean> tyreInfoCollection;
+    private int j;
 
     public TerminalFragment() {
         broadcastReceiver = new BroadcastReceiver() {
@@ -231,7 +244,7 @@ public class TerminalFragment extends Fragment implements SerialInputOutputManag
                 usbIoManager = new SerialInputOutputManager(usbSerialPort, this);
                 Executors.newSingleThreadExecutor().submit(usbIoManager);
             }
-            status("connected");
+            status("connected:port is " + portNum);
             connected = true;
             controlLines.start();
         } catch (Exception e) {
@@ -262,7 +275,7 @@ public class TerminalFragment extends Fragment implements SerialInputOutputManag
         try {
         byte[] data = (str + '\n').getBytes();
             SpannableStringBuilder spn = new SpannableStringBuilder();
-            spn.append("send " + data.length + " bytes\n");
+            spn.append("send ").append(String.valueOf(data.length)).append(" bytes\n");
             spn.append(HexDump.dumpHexString(data)).append("\n");
             spn.setSpan(new ForegroundColorSpan(getResources().getColor(R.color.colorSendText)), 0, spn.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             receiveText.append(spn);
@@ -292,10 +305,145 @@ public class TerminalFragment extends Fragment implements SerialInputOutputManag
     private void receive(byte[] data) {
         SpannableStringBuilder spn = new SpannableStringBuilder();
         spn.append("receive " + data.length + " bytes\n");
-        if(data.length > 0)
+        if(data.length > 0) {
             spn.append(HexDump.dumpHexString(data)).append("\n");
+            handleTyreData(data);
+        }
         receiveText.append(spn);
     }
+
+    private void dumpTyreInfo(TyreInfoBean tyreInfoBean){
+        SpannableStringBuilder spn = new SpannableStringBuilder();
+
+        String tyreName = "右后轮";
+        if (tyreInfoBean.getPosition() == 2) {
+            tyreName = "左前轮";
+        } else if (tyreInfoBean.getPosition() == 1) {
+            tyreName = "右前轮";
+        } else if (tyreInfoBean.getPosition() == 4) {
+            tyreName = "左后轮";
+        }
+        spn.append(tyreName + "--" + tyreInfoBean.getSensorId() + "，压力：" + tyreInfoBean.getAirPressure() + "，温度：" + tyreInfoBean.getTemperature() + "，压力值：" + tyreInfoBean.getAirValue() + "\n");
+        //sendMessage(tyreInfoBean);
+        receiveText.append(spn);
+    }
+
+    private void sendMessage(TyreInfoBean tyreInfoBean){
+        Intent updateIntent =new Intent();
+        updateIntent.setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE);
+        Bundle extras = new Bundle();
+        extras.putInt("tyreIndex",tyreInfoBean.getPosition());
+        extras.putString("pressure",tyreInfoBean.getAirPressure());
+        extras.putString("temp",tyreInfoBean.getTemperature());
+        extras.putIntArray(AppWidgetManager.EXTRA_APPWIDGET_IDS, new int[]{R.layout.tpms_widget});
+        updateIntent.putExtras(extras);
+        LocalBroadcastManager.getInstance(getActivity()).sendBroadcast(updateIntent);
+    }
+
+    private void handleTyreData(byte[] bArr){
+        try{
+            byte[] bArr2 = new byte[8];
+            if (bArr != null && bArr[4] == 99 && bArr.length >= 7) {
+                boolean z = true;
+                if (bArr[5] == 0) {
+                    if (bArr.length >= 15) {
+                        System.arraycopy(bArr, 6, bArr2, 0, bArr2.length);
+                        postTyreInfo(bArr2, false);
+                        if (this.tyreInfoCollection.size() >= this.j) {
+                            TyreInfoCollection tyreInfoCollection = new TyreInfoCollection();
+                            tyreInfoCollection.putAll(this.tyreInfoCollection);
+                            try {
+                                Iterator it = tyreInfoCollection.values().iterator();
+                                while (true) {
+                                    if (!it.hasNext()) {
+                                        z = false;
+                                        break;
+                                    }
+                                    TyreInfoBean tyreInfoBean = (TyreInfoBean) it.next();
+                                    if (tyreInfoBean != null && tyreInfoBean.getState() != 0) {
+                                        break;
+                                    }
+                                }
+                                if (z) {
+//                                b((mate.steel.com.t620.usb.a<Boolean>) null);
+                                }
+                            } catch (Exception e2) {
+                                e2.printStackTrace();
+                            }
+                        EventBus.getDefault().post(new TyreInfoEvent(tyreInfoCollection));
+//                        o();
+                        }
+                    } else if (bArr.length == 8) {
+                        this.j = bArr[6] & 255;
+//                    EventBus.getDefault().post(new g());
+                        this.tyreInfoCollection.clear();
+                        if (this.j <= 0) {
+                        EventBus.getDefault().post(new TyreInfoEvent(this.tyreInfoCollection));
+//                        o();
+                        }
+                    }
+                } else if (bArr[5] != -1 && bArr[5] != -86 && bArr.length >= 14) {
+                    System.arraycopy(bArr, 5, bArr2, 0, bArr2.length);
+                    if (postTyreInfo(bArr2, true)) {
+//                    b((mate.steel.com.t620.usb.a<Boolean>) null);
+                    }
+                }
+            }
+        }catch (Exception e){
+            receiveText.append(e.getMessage());
+        }
+
+    }
+
+    private boolean postTyreInfo(byte[] bArr,boolean z){
+        boolean z2;
+        synchronized (this) {
+            z2 = false;
+            if (bArr != null) {
+                try {
+                    if (bArr.length == 8) {
+                        TyreInfoBean g2 = getTyreInfoBean(bArr);
+                        this.tyreInfoCollection.put(Integer.valueOf(g2.getPosition()), g2);
+                        if (g2.getState() != 0) {
+                            z2 = true;
+                        }
+                        if (z) {
+                            TyreInfoCollection tyreInfoCollection = new TyreInfoCollection();
+                            tyreInfoCollection.putAll(this.tyreInfoCollection);
+                            EventBus.getDefault().post(new TyreInfoEvent(tyreInfoCollection));
+//                            o();
+                        }
+//                        q.a(a, ">>>>>>>>>>>>>>>>>== aredy post tyres info ==<<<<<<<<<<<<<<<<<<<");
+                    }
+                } catch (Throwable th) {
+                    throw th;
+                }
+            }
+        }
+        return z2;
+    }
+
+    private TyreInfoBean getTyreInfoBean(byte[] bArr) {
+        if (bArr == null || bArr.length != 8) {
+            return null;
+        }
+        TyreInfoBean tyreInfoBean = new TyreInfoBean();
+        StringBuilder sb = new StringBuilder();
+        tyreInfoBean.setPosition(bArr[0] & 255);
+        sb.append("0x");
+        sb.append(HexDump.a(bArr[1]));
+        sb.append(HexDump.a(bArr[2]));
+        sb.append(HexDump.a(bArr[3]));
+        tyreInfoBean.setSensorId(sb.toString());
+        float parseFloat = Float.parseFloat(HexDump.getBigDecimalStr(((float) HexDump.getBigDecimalDou((double) (((bArr[4] << 8) & 768) | (bArr[5] & 255)), 0.025d)) + "", 1));
+        tyreInfoBean.setAirValue(parseFloat);
+        tyreInfoBean.setAirPressure(HexDump.getBigDecimalStr(parseFloat + "", 1));
+        tyreInfoBean.setTemperature("" + ((bArr[6] & 255) + -50));
+        tyreInfoBean.setState(bArr[7]);
+        dumpTyreInfo(tyreInfoBean);
+        return tyreInfoBean;
+    }
+
 
     void status(String str) {
         SpannableStringBuilder spn = new SpannableStringBuilder(str+'\n');

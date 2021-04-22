@@ -16,16 +16,54 @@
 
 package com.hoho.android.usbserial.util;
 
+import java.math.BigDecimal;
 import java.security.InvalidParameterException;
+import java.text.DecimalFormat;
+import java.util.concurrent.ThreadPoolExecutor;
 
 /**
  * Clone of Android's HexDump class, for use in debugging. Cosmetic changes
  * only.
  */
 public class HexDump {
+    private static final DecimalFormat decimalFormat = new DecimalFormat("#.#");
+    private static final byte[] b = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 65, 66, 67, 68, 69, 70};
+    private static final byte[] c = {48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102};
+    private static ThreadPoolExecutor d;
+
     private final static char[] HEX_DIGITS = {
             '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'
     };
+
+    public static String getBigDecimalStr(String str, int i) {
+        return new BigDecimal(str).setScale(i, 1).toString();
+    }
+
+    public static double getBigDecimalDou(double d, double d2) {
+        return new BigDecimal(Double.toString(d)).multiply(new BigDecimal(Double.toString(d2))).doubleValue();
+    }
+
+    private static final String a = "o";
+
+    public static String a(byte b) {
+        String hexString = Integer.toHexString(b & 255);
+        if (hexString.length() >= 2) {
+            return hexString;
+        }
+        return "0" + hexString;
+    }
+
+    public static String a(byte[] bArr) {
+        StringBuilder sb = new StringBuilder();
+        if (bArr != null) {
+            for (byte b : bArr) {
+                sb.append(a(b));
+                sb.append(" ");
+            }
+        }
+        return sb.toString();
+    }
+
 
     public static String dumpHexString(byte[] array) {
         return dumpHexString(array, 0, array.length);
